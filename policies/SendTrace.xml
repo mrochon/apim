@@ -54,6 +54,7 @@
                 rspHdrs.Add(h.Key, h.Value.First());
             }                
             return new JObject(
+                new JProperty("timestamp", context.Timestamp),       
                 new JProperty("request", 
                     new JObject(
                         new JProperty("uri",$"{context.Request.Url.Scheme}://{context.Request.Url.Host}{context.Request.Url.Path}{context.Request.Url.QueryString}"),
@@ -61,15 +62,14 @@
                         new JProperty("headers", reqHdrs),                            
                         new JProperty("method", context.Request.Method), 
                         new JProperty("body", context.Request.Body == null? "": Convert.ToBase64String(context.Request.Body.As<byte[]>(preserveContent: true))),  
-                        new JProperty("trueClientIp", context.Request.IpAddress) 
+                        new JProperty("trueClientIp", context.Request.IpAddress)
                     )                                                     
                 ),
                 new JProperty("response", 
                     new JObject(
                         new JProperty("headers", rspHdrs),                              
                         new JProperty("body",  context.Response.Body == null? "": Convert.ToBase64String(context.Response.Body.As<byte[]>(preserveContent: true))),  
-                        new JProperty("responseCode", context.Response.StatusCode),
-                        new JProperty("timestamp", context.Timestamp)                     
+                        new JProperty("responseCode", context.Response.StatusCode)                   
                     )
                 )
             )
