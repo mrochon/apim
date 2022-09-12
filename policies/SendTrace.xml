@@ -1,0 +1,80 @@
+<outbound>
+    <cache-lookup-value key="{{ceq-ingress-endpoint}}-token-key" variable-name="token" caching-type="internal" />
+    <cache-lookup-value key="{{ceq-ingress-endpoint}}-token-exp-key" variable-name="token-exp" caching-type="internal" />
+    <choose>
+        <when condition="@(!context.Variables.ContainsKey("token") || 
+                           !context.Variables.ContainsKey("token-exp") ||
+                           (context.Variables.ContainsKey("token") && 
+                            context.Variables.ContainsKey("token-exp") && 
+                            (DateTime.Parse((String)context.Variables["token-exp"]).AddMinutes(-5.0) 
+                             <= DateTime.UtcNow) 
+                           )
+                        )">
+            <send-request ignore-error="false" timeout="{{ceq-token-acquisition-timeout}}" response-variable-name="jwt" mode="new">
+                <set-url>{{ceq-token-endpoint}}</set-url>
+                <set-method>POST</set-method>
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/x-www-form-urlencoded</value>
+                </set-header>
+                <set-body>@("client_id={{ceq-client-id}}&client_secret={{ceq-client-secret}}&grant_type=client_credentials")</set-body>
+            </send-request>
+            <set-variable name="token" value="@((String)((IResponse)context.Variables["jwt"]).Body.As<JObject>()["access_token"])" />
+            <set-variable name="token-exp" value="@{
+                string jwt = (String)context.Variables["token"];
+                string base64 = jwt.Split('.')[1].Replace("-", "+").Replace("_", "/");
+                int mod4 = base64.Length % 4;
+                if (mod4 > 0)
+                {
+                    base64 += new String('=', 4 - mod4);
+                }
+                string base64_encoded = System.Text.Encoding.ASCII.GetString(Convert.FromBase64String(base64));
+                double exp_num = (double)JObject.Parse(base64_encoded)["exp"];
+                DateTime exp = (new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)).AddSeconds(exp_num);
+                return exp.ToString("MM-dd-yyyy HH:mm:ss");
+            }" />
+            <cache-store-value key="{{ceq-ingress-endpoint}}-token-key" value="@((String)context.Variables["token"])" duration="3600" caching-type="internal" />
+            <cache-store-value key="{{ceq-ingress-endpoint}}-token-exp-key" value="@((String)context.Variables["token-exp"])" duration="3600" caching-type="internal" />
+        </when>
+    </choose>
+    <send-one-way-request mode="new">
+        <set-url>{{ceq-ingress-endpoint}}</set-url>
+        <set-method>POST</set-method>
+        <set-header name="Authorization" exists-action="override">
+            <value>@{
+                return $"Bearer {(String)context.Variables["token"]}";
+            }</value>
+        </set-header>
+        <set-body>@{
+            var reqHdrs = new JObject();
+            foreach (var h in context.Request.Headers) {
+                reqHdrs.Add(h.Key, h.Value.First());
+            }
+            var rspHdrs = new JObject();
+            foreach (var h in context.Response.Headers) {
+                rspHdrs.Add(h.Key, h.Value.First());
+            }                
+            return new JObject(
+                new JProperty("request", 
+                    new JObject(
+                        new JProperty("uri",$"{context.Request.Url.Scheme}://{context.Request.Url.Host}{context.Request.Url.Path}{context.Request.Url.QueryString}"),
+                        //new JProperty("headers", new JArray(context.Request.Headers.Select(h => h.Key))),
+                        new JProperty("headers", reqHdrs),                            
+                        new JProperty("method", context.Request.Method), 
+                        new JProperty("body", context.Request.Body == null? "": Convert.ToBase64String(context.Request.Body.As<byte[]>(preserveContent: true))),  
+                        new JProperty("trueClientIp", context.Request.IpAddress) 
+                    )                                                     
+                ),
+                new JProperty("response", 
+                    new JObject(
+                        new JProperty("headers", rspHdrs),                              
+                        new JProperty("body",  context.Response.Body == null? "": Convert.ToBase64String(context.Response.Body.As<byte[]>(preserveContent: true))),  
+                        new JProperty("responseCode", context.Response.StatusCode),
+                        new JProperty("timestamp", context.Timestamp)                     
+                    )
+                )
+            )
+            .ToString(Newtonsoft.Json.Formatting.None);
+        }</set-body>
+    </send-one-way-request>
+    <base />
+</outbound>
