@@ -2,5 +2,7 @@
 My Azure API Management samples
 
 ##Policies
-|--|--|
+
+| Item | Description |
+|---|---|
 | Send trace info | Posts (fire-forget) complete request/response trace data to an http recipient |
