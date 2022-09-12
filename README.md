@@ -1,8 +1,8 @@
 # Azure API Management 
 My Azure API Management samples
 
-##Policies
+## Policies
 
 | Item | Description |
 |---|---|
-| Send trace info | Posts (fire-forget) complete request/response trace data to an http recipient |
+| [Send trace info](https://github.com/mrochon/apim/blob/main/policies/SendTrace.xml) | Posts (fire-forget) complete request/response trace data to an http recipient |
