@@ -1,80 +1,113 @@
-<outbound>
-    <cache-lookup-value key="{{ceq-ingress-endpoint}}-token-key" variable-name="token" caching-type="internal" />
-    <cache-lookup-value key="{{ceq-ingress-endpoint}}-token-exp-key" variable-name="token-exp" caching-type="internal" />
-    <choose>
-        <when condition="@(!context.Variables.ContainsKey("token") || 
-                           !context.Variables.ContainsKey("token-exp") ||
-                           (context.Variables.ContainsKey("token") && 
-                            context.Variables.ContainsKey("token-exp") && 
-                            (DateTime.Parse((String)context.Variables["token-exp"]).AddMinutes(-5.0) 
-                             <= DateTime.UtcNow) 
-                           )
-                        )">
-            <send-request ignore-error="false" timeout="{{ceq-token-acquisition-timeout}}" response-variable-name="jwt" mode="new">
-                <set-url>{{ceq-token-endpoint}}</set-url>
-                <set-method>POST</set-method>
-                <set-header name="Content-Type" exists-action="override">
-                    <value>application/x-www-form-urlencoded</value>
-                </set-header>
-                <set-body>@("client_id={{ceq-client-id}}&client_secret={{ceq-client-secret}}&grant_type=client_credentials")</set-body>
-            </send-request>
-            <set-variable name="token" value="@((String)((IResponse)context.Variables["jwt"]).Body.As<JObject>()["access_token"])" />
-            <set-variable name="token-exp" value="@{
-                string jwt = (String)context.Variables["token"];
-                string base64 = jwt.Split('.')[1].Replace("-", "+").Replace("_", "/");
-                int mod4 = base64.Length % 4;
-                if (mod4 > 0)
-                {
-                    base64 += new String('=', 4 - mod4);
+<!--
+    IMPORTANT:
+    - Policy elements can appear only within the <inbound>, <outbound>, <backend> section elements.
+    - To apply a policy to the incoming request (before it is forwarded to the backend service), place a corresponding policy element within the <inbound> section element.
+    - To apply a policy to the outgoing response (before it is sent back to the caller), place a corresponding policy element within the <outbound> section element.
+    - To add a policy, place the cursor at the desired insertion point and select a policy from the sidebar.
+    - To remove a policy, delete the corresponding policy statement from the policy document.
+    - Position the <base> element within a section element to inherit all policies from the corresponding section element in the enclosing scope.
+    - Remove the <base> element to prevent inheriting policies from the corresponding section element in the enclosing scope.
+    - Policies are applied in the order of their appearance, from the top down.
+    - Comments within policy elements are not supported and may disappear. Place your comments between policy elements or at a higher level scope.
+-->
+<policies>
+    <inbound>
+        <base />
+        <!--validate-jwt header-name="Authorization" failed-validation-httpcode="401">
+            <openid-config url="https://login.microsoftonline.com/7d1abfb9-9f4e-4ec6-8280-722dd7bf9b50/v2.0/.well-known/openid-configuration" />
+            <audiences>
+                <audience>fbc2b434-7107-4110-8878-42988db629fd</audience>
+            </audiences>
+        </validate-jwt>
+        <set-variable name="accessToken" value="@(context.Request.Headers.GetValueOrDefault("Authorization","scheme value").Split(' ')[1].AsJwt())" /-->
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <cache-lookup-value key="{{ceq-ingress-endpoint}}-token-key" variable-name="token" caching-type="internal" />
+        <cache-lookup-value key="{{ceq-ingress-endpoint}}-token-exp-key" variable-name="token-exp" caching-type="internal" />
+        <choose>
+            <when condition="@(!context.Variables.ContainsKey("token") || 
+                               !context.Variables.ContainsKey("token-exp") ||
+                               (context.Variables.ContainsKey("token") && 
+                                context.Variables.ContainsKey("token-exp") && 
+                                (DateTime.Parse((String)context.Variables["token-exp"]).AddMinutes(-5.0) 
+                                 <= DateTime.UtcNow) 
+                               )
+                            )">
+                <send-request ignore-error="false" timeout="{{ceq-token-acquisition-timeout}}" response-variable-name="jwt" mode="new">
+                    <set-url>{{ceq-token-endpoint}}</set-url>
+                    <set-method>POST</set-method>
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/x-www-form-urlencoded</value>
+                    </set-header>
+                    <set-body>@("client_id={{ceq-client-id}}&client_secret={{ceq-client-secret}}&grant_type=client_credentials")</set-body>
+                </send-request>
+                <set-variable name="token" value="@((String)((IResponse)context.Variables["jwt"]).Body.As<JObject>()["access_token"])" />
+                <set-variable name="token-exp" value="@{
+                    string jwt = (String)context.Variables["token"];
+                    string base64 = jwt.Split('.')[1].Replace("-", "+").Replace("_", "/");
+                    int mod4 = base64.Length % 4;
+                    if (mod4 > 0)
+                    {
+                        base64 += new String('=', 4 - mod4);
+                    }
+                    string base64_encoded = System.Text.Encoding.ASCII.GetString(Convert.FromBase64String(base64));
+                    double exp_num = (double)JObject.Parse(base64_encoded)["exp"];
+                    DateTime exp = (new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)).AddSeconds(exp_num);
+                    return exp.ToString("MM-dd-yyyy HH:mm:ss");
+                }" />
+                <cache-store-value key="{{ceq-ingress-endpoint}}-token-key" value="@((String)context.Variables["token"])" duration="3600" caching-type="internal" />
+                <cache-store-value key="{{ceq-ingress-endpoint}}-token-exp-key" value="@((String)context.Variables["token-exp"])" duration="3600" caching-type="internal" />
+            </when>
+        </choose>
+        <send-one-way-request mode="new">
+            <set-url>{{ceq-ingress-endpoint}}</set-url>
+            <set-method>POST</set-method>
+            <set-header name="Authorization" exists-action="override">
+                <value>@{
+                    return $"Bearer {(String)context.Variables["token"]}";
+                }</value>
+            </set-header>
+            <set-header name="Content-type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-body>@{
+                var reqHdrs = new JObject();
+                foreach (var h in context.Request.Headers) {
+                    reqHdrs.Add(h.Key, h.Value.First());
                 }
-                string base64_encoded = System.Text.Encoding.ASCII.GetString(Convert.FromBase64String(base64));
-                double exp_num = (double)JObject.Parse(base64_encoded)["exp"];
-                DateTime exp = (new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)).AddSeconds(exp_num);
-                return exp.ToString("MM-dd-yyyy HH:mm:ss");
-            }" />
-            <cache-store-value key="{{ceq-ingress-endpoint}}-token-key" value="@((String)context.Variables["token"])" duration="3600" caching-type="internal" />
-            <cache-store-value key="{{ceq-ingress-endpoint}}-token-exp-key" value="@((String)context.Variables["token-exp"])" duration="3600" caching-type="internal" />
-        </when>
-    </choose>
-    <send-one-way-request mode="new">
-        <set-url>{{ceq-ingress-endpoint}}</set-url>
-        <set-method>POST</set-method>
-        <set-header name="Authorization" exists-action="override">
-            <value>@{
-                return $"Bearer {(String)context.Variables["token"]}";
-            }</value>
-        </set-header>
-        <set-body>@{
-            var reqHdrs = new JObject();
-            foreach (var h in context.Request.Headers) {
-                reqHdrs.Add(h.Key, h.Value.First());
-            }
-            var rspHdrs = new JObject();
-            foreach (var h in context.Response.Headers) {
-                rspHdrs.Add(h.Key, h.Value.First());
-            }                
-            return new JObject(
-                new JProperty("request", 
-                    new JObject(
-                        new JProperty("uri",$"{context.Request.Url.Scheme}://{context.Request.Url.Host}{context.Request.Url.Path}{context.Request.Url.QueryString}"),
-                        //new JProperty("headers", new JArray(context.Request.Headers.Select(h => h.Key))),
-                        new JProperty("headers", reqHdrs),                            
-                        new JProperty("method", context.Request.Method), 
-                        new JProperty("body", context.Request.Body == null? "": Convert.ToBase64String(context.Request.Body.As<byte[]>(preserveContent: true))),  
-                        new JProperty("trueClientIp", context.Request.IpAddress) 
-                    )                                                     
-                ),
-                new JProperty("response", 
-                    new JObject(
-                        new JProperty("headers", rspHdrs),                              
-                        new JProperty("body",  context.Response.Body == null? "": Convert.ToBase64String(context.Response.Body.As<byte[]>(preserveContent: true))),  
-                        new JProperty("responseCode", context.Response.StatusCode),
-                        new JProperty("timestamp", context.Timestamp)                     
+                var rspHdrs = new JObject();
+                foreach (var h in context.Response.Headers) {
+                    rspHdrs.Add(h.Key, h.Value.First());
+                }                
+                return new JObject(
+                    new JProperty("request", 
+                        new JObject(
+                            new JProperty("uri",$"{context.Request.Url.Scheme}://{context.Request.Url.Host}{context.Request.Url.Path}{context.Request.Url.QueryString}"),
+                            //new JProperty("headers", new JArray(context.Request.Headers.Select(h => h.Key))),
+                            new JProperty("headers", reqHdrs),                            
+                            new JProperty("method", context.Request.Method), 
+                            new JProperty("body", context.Request.Body == null? "": Convert.ToBase64String(context.Request.Body.As<byte[]>(preserveContent: true))),  
+                            new JProperty("trueClientIp", context.Request.IpAddress)
+                        )                                                     
+                    ),
+                    new JProperty("response", 
+                        new JObject(
+                            new JProperty("headers", rspHdrs),                              
+                            new JProperty("body",  context.Response.Body == null? "": Convert.ToBase64String(context.Response.Body.As<byte[]>(preserveContent: true))),  
+                            new JProperty("responseCode", context.Response.StatusCode),
+                            new JProperty("timestamp", new DateTimeOffset(context.Timestamp).ToUnixTimeMilliseconds())
+                        )
                     )
                 )
-            )
-            .ToString(Newtonsoft.Json.Formatting.None);
-        }</set-body>
-    </send-one-way-request>
-    <base />
-</outbound>
+                .ToString(Newtonsoft.Json.Formatting.None);
+            }</set-body>
+        </send-one-way-request>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
