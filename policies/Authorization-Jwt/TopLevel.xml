@@ -1,0 +1,20 @@
+<policies>
+    <inbound>
+        <base />
+        <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer" output-token-variable-name="jwt">
+            <openid-config url="https://login.microsoftonline.com/c3645e09-d602-4e25-950c-5850e383d6f2/v2.0/.well-known/openid-configuration" />
+            <audiences>
+                <audience>bb5820b1-e2ce-4fa0-acc3-6bd85adfa624</audience>
+            </audiences>
+        </validate-jwt>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
