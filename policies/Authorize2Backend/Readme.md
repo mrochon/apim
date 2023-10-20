@@ -1,4 +1,4 @@
-# Autheorize to backend API using OAuth2
+# Authorize to backend API using OAuth2
 
 Configures APIM to acquire an OAuth2 token from an authorization server and use it in the call to the backend API.
 [Reference documentation](https://learn.microsoft.com/en-us/azure/api-management/authorizations-overview).
